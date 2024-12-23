@@ -1,0 +1,1079 @@
+---
+title: "walmart_2"
+output: html_document
+date: "2024-04-30"
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Loading dataset
+
+```{r}
+data <- read.csv("walmart1.csv")
+```
+
+```{r}
+summary(data)
+```
+
+```{r}
+View(data)
+```
+
+### Handling missing values
+
+```{r}
+# Check for missing values
+missing_values <- sum(is.na(data))
+cat("Number of missing values in the dataset:", missing_values, "\n")
+```
+
+```{r}
+library(lubridate)
+#convert to one format
+data$Date <- dmy(data$Date)
+```
+
+```{r}
+# Extract day, month and year into separate columns
+data$Day <- format(data$Date, "%d")
+data$Month <- format(data$Date, "%m")
+data$Year <- format(data$Date, "%Y")
+data$Week <- week(data$Date)
+
+View(data)
+```
+
+```{r}
+summary(data)
+```
+
+### Splitting the dataset into train and test
+
+```{r}
+# Load the caret package for data splitting
+library(caret)
+
+# Set seed for reproducibility
+set.seed(123)
+
+# Split the data into training (80%) and testing (20%) sets
+train_index <- createDataPartition(data$Weekly_Sales, p = 0.8, list = FALSE)
+train_data <- data[train_index, ]
+test_data <- data[-train_index, ]
+
+# Check the dimensions of the training and testing sets
+cat("Training set size:", nrow(train_data), "\n")
+cat("Testing set size:", nrow(test_data), "\n")
+
+```
+
+## EDA
+
+### Correlation matrix
+
+```{r}
+library(dplyr)
+# Correlation matrix
+correlation_matrix <- cor(select(data, -Date, -Holiday_Flag, -Day, -Month, -Year, -Week))
+print(correlation_matrix)
+```
+
+```{r}
+# Load required libraries
+library(ggplot2)
+library(reshape2)
+
+# Melt correlation matrix for visualization
+melted_correlation <- melt(correlation_matrix)
+
+# Build correlation heatmap with values
+ggplot(data = melted_correlation, aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile() +
+  scale_fill_gradient(low = "skyblue", high = "blue") +
+  geom_text(aes(label = round(value, 2)), color = "white") +  # Include correlation values
+  labs(title = "Correlation Heatmap",
+       x = "Variables",
+       y = "Variables")
+
+```
+
+**Inference:**
+
+-   The strongest correlation is observed between store and weekly
+    sales, indicating that store size may have a noticeable impact on
+    weekly sales.
+
+-   Temperature, fuel price, CPI, and unemployment rate have weak to
+    moderate correlations with weekly sales, suggesting that these
+    factors may have only a limited influence on weekly sales compared
+    to other factors not included in the correlation matrix.
+
+-   It's important to note that correlation does not imply causation.
+    While these correlations provide insights into potential
+    relationships between variables, other factors and complex
+    interactions may also influence weekly sales.
+
+### Visualize trends
+
+#### Year wise sales performance
+
+```{r}
+###Store Data
+Store_data<-data %>% dplyr::group_by(Store) %>% 
+  dplyr::summarise(Total_Sales=sum(Weekly_Sales), 
+                   Average_Unemployment = mean(Unemployment))
+###yearlyData
+year_data<-data %>% dplyr::group_by(Year) %>% 
+  dplyr::summarise(Total_Sales=sum(Weekly_Sales), 
+                   Average_Unemployment = mean(Unemployment),
+                   total_holidays = sum(Holiday_Flag))
+
+# yearly growth 
+ggplot(data_yearly, aes(x = Year, y = Total_Sales)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(x = "Year", y = "Total Sales", title = "Yearly Sales Performance")+
+  scale_y_continuous(labels = scales::comma)
+```
+
+The plot suggests a notable trend in sales, revealing a slight increase
+in sales during the year 2011 followed by a decrease in sales during
+2012. However, it's crucial to recognize that this observed pattern may
+be influenced by the temporal scope of the data, which extends only
+until October 2012.
+
+#### Proportion of sales for months
+
+```{r}
+month_data <- data %>% 
+  dplyr::group_by(Month, Store) %>% 
+  dplyr::summarise(Total_Sales = sum(Weekly_Sales), 
+                   Average_Unemployment = mean(Unemployment),
+                   total_holidays = first(Holiday_Flag),
+                   .groups = "drop")  # Specify how to handle grouping
+
+library(plotly)
+
+# Create a 3D pie chart using plotly for Sales Across every month
+fig <- plot_ly(month_data, labels = ~Month, values = ~Total_Sales, type = "pie",
+               textinfo = "label+percent", 
+               hoverinfo = "text",
+               hovertext = paste(month_data$Month, ": ", month_data$Total_Sales),
+               hole = 0.4)
+
+# Define a custom color palette
+custom_colors <- c("#FFC300", "#FF5733", "#C70039", "#900C3F", "#581845")
+
+# Update the pie chart layout
+fig <- fig %>% layout(title = "Sales on each Month",
+                      scene = list(aspectmode = "cube"),
+                      legend = list(x = -0.2, y = 0.5, orientation = "v"),
+                      margin = list(l = 100, r = 100, b = 100, t = 100),
+                      colorway = custom_colors)
+
+# Display the chart
+fig
+
+```
+
+The pie chart offers a visual representation of the proportion of sales attributed to each month, revealing notable insights into sales trends throughout the year. Here's a breakdown of the key observations:
+
+Consistency Across Months: The majority of months demonstrate relatively consistent proportions of sales, indicating stable sales performance across the year. This consistency suggests that sales remain relatively steady across most months, with similar levels of consumer activity and purchasing behavior.
+
+Low January Sales: One notable exception is January, which exhibits a significantly lower proportion of sales compared to other months. This observation suggests that sales in January are disproportionately low relative to other months, indicating potential factors such as post-holiday spending fatigue, reduced consumer demand following the holiday season, or seasonal variations in purchasing behavior.
+
+Seasonal Variations: The summer months of June, July, and August emerge as the periods with the highest proportions of sales. This finding aligns with expectations, as the summer season often corresponds with increased consumer activity, higher foot traffic, and elevated spending levels driven by factors such as vacations, outdoor activities, and back-to-school shopping.
+
+#### Weekly sales each month over years
+
+```{r}
+year_month_data <- data %>% 
+  dplyr::group_by(Year, Month) %>% 
+  dplyr::summarise(Total_Sales = sum(Weekly_Sales), 
+                   Average_Unemployment = mean(Unemployment),
+                   total_holidays = sum(Holiday_Flag),
+                   .groups = "drop")  # Specify how to handle grouping
+
+library(scales)
+
+# Convert month to a factor so it's plotted in the correct order
+year_month_data$month <- factor(year_month_data$Month, levels = c("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"))
+
+# Plot monthly sales for different years
+# Monthly sales trend across different years
+ggplot(year_month_data, aes(x = Month, y = Total_Sales, group = Year, 
+                            color = factor(Year))) +
+  geom_line(size = 1.50) + 
+  geom_point(size = 3.0) + 
+  labs(title = "Monthly Sales by Year", x = "Month", y = "Sales", color = "Year")+ 
+  scale_y_continuous(labels = comma)+ 
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank())
+
+```
+
+The observation that sales peak during November and December each year
+suggests a seasonal pattern, likely influenced by factors such as
+holiday shopping, end-of-year promotions, and festive seasons. This
+consistent trend underscores the importance of these months in driving
+overall sales performance annually.
+
+Furthermore, noting that the sales trends in 2010 and 2011 exhibit a
+similar pattern reinforces the notion of consistent behavior over those
+years. This consistency may be attributed to stable economic conditions,
+marketing strategies, and consumer behavior during those periods.
+
+However, the deviation in sales trends observed in the 2012 data
+indicates a departure from the expected pattern. Several factors could
+contribute to this discrepancy, including changes in market dynamics,
+shifts in consumer preferences, or external events impacting purchasing
+behavior. Moreover, as the available data only extends until October
+2012, it's possible that the observed trend may not fully capture the
+sales dynamics for the entire year.
+
+#### Unemployment for different years
+
+```{r}
+
+ggplot(year_month_data, aes(x = Month, y = Average_Unemployment, group = Year, 
+                            color = factor(Year))) +
+  geom_line(size = 1.50) + geom_point(size = 3.0) + 
+  labs(title = "Average_Unemployment by Year", x = "Month", y = "Average_Unemployment", color = "Year")+ 
+  scale_y_continuous(labels = comma)+ 
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+```
+
+The observation that unemployment rates decreased over the years,
+reaching their lowest point in 2012, suggests a positive trend in the
+employment market.
+
+#### Weekly sales trend for months
+
+```{r}
+# create a plotly object
+p <- plot_ly(week_month_data, x = ~Week, y = ~Total_Sales, color = ~Month, colors = "viridis",
+             type = "scatter", mode = "lines+markers", line = list(width = 2),
+             marker = list(size = 5, opacity = 0.7), hovertemplate = "Sales: %{y:,.0f}<br>Week: %{x}<br>")
+
+# customize the plot layout
+p <- p %>% layout(title = "Weekly Sales by Month", xaxis = list(title = "Week"), yaxis = list(title = "Sales"),
+                  legend = list(title = "Month"), hoverlabel = list(font = list(size = 12)))
+
+# display the plot
+p
+
+```
+
+**Consistent Monthly Patterns**: Across most months, a recurring pattern
+emerges where weekly sales start relatively low, gradually increase
+towards the middle weeks, and then decline towards the end of the month.
+This cyclic pattern suggests a potential correlation with consumer
+behavior, such as paycheck cycles, shopping habits, and promotional
+activities.
+
+**Peak Performance in Middle Weeks:** The middle weeks of each month
+consistently stand out as the best-performing weeks, characterized by
+higher sales figures compared to the beginning and end of the month.
+This trend aligns with expectations, as consumers may allocate more
+disposable income towards discretionary purchases during this period,
+including mid-month paydays and promotional events.
+
+**Exception in October:** October bucks the trend observed in other
+months, with sales starting at a relatively high level and gradually
+declining over the course of the month. This deviation may be influenced
+by seasonal factors, such as Halloween-related promotions and early
+holiday shopping, prompting increased consumer spending at the beginning
+of the month before tapering off towards the end.
+
+**Significant Sales Spikes:** Notably, many second weeks across months
+exhibit sales figures exceeding 140M, indicating consistent peaks in
+performance during this period. Understanding the drivers behind these
+spikes, such as marketing initiatives, seasonal trends, or external
+factors, can provide valuable insights into optimizing sales strategies
+and capitalizing on peak demand periods.
+
+#### Sales pattern done by each store
+
+```{r}
+# plot monthly sales for different years
+ggplot(Store_data, aes(x = Store, y = Total_Sales)) +
+  geom_line(size = 1.50, color = 'red') + geom_point(size = 3.0) + 
+  labs(title = "Weekly Sales acorss stores", x = "Stores", y = "Sales")+ 
+  scale_y_continuous(labels = comma)+ theme(panel.grid.major = element_blank(), 
+                                            panel.grid.minor = element_blank())
+```
+
+The plot visually highlights the performance of different stores, with
+stores numbered between 30-37 and 41-45 appearing to be among the least
+performing. This observation underscores the importance of analyzing
+store-level data to identify areas for improvement and strategic
+intervention.
+
+Understanding the factors contributing to the under performance of these
+stores is crucial for devising targeted strategies to enhance their
+sales and profitability. Possible factors to consider may include:
+
+Location: Stores in less favorable locations, with lower foot traffic or
+limited access to target demographics, may struggle to attract customers
+and generate sales. Store Size and Layout: Smaller stores or those with
+sub-optimal layouts may face challenges in effectively showcasing
+products and providing a pleasant shopping experience for customers.
+
+#### Unemployment vs sales
+
+```{r}
+#Month_WEek_Data
+UE_data<-data %>% dplyr::group_by(Unemployment) %>% 
+  dplyr::summarise(Total_Sales=sum(Weekly_Sales), 
+                   holiday_flag = first(Holiday_Flag))
+
+# plot monthly sales for different years
+ggplot(UE_data, aes(x = Unemployment, y = Total_Sales)) +
+  geom_line(size = 0.7, color = 'purple') + geom_point(size = 2.0) + 
+  labs(title = "Sales Vs Unemployment Trend", x = "Unemployment Rate", y = "Sales")+ 
+  scale_y_continuous(labels = comma)+ theme(panel.grid.major = element_blank(), 
+                                            panel.grid.minor = element_blank())
+
+
+```
+
+The plot highlights the relationship between unemployment rates and
+sales, revealing a discernible pattern where increasing unemployment
+rates correspond to a slight decrease in overall sales. This observation
+suggests a potential inverse relationship between unemployment and
+consumer spending, with higher unemployment rates likely exerting
+downward pressure on sales volumes.
+
+Several factors may contribute to this observed phenomenon:
+
+Consumer Confidence: Rising unemployment rates often lead to heightened
+economic uncertainty and reduced consumer confidence. In response,
+individuals may exercise caution with their spending, prioritizing
+essential purchases and scaling back on discretionary spending, thereby
+dampening overall sales levels.
+
+Income Constraints: Unemployment can directly impact individuals'
+disposable income levels, limiting their purchasing power and
+constraining their ability to make non-essential purchases. As a result,
+businesses may experience reduced demand for their products or services,
+leading to a decline in sales.
+
+
+
+#### Effect of temparature on sales
+
+```{r}
+
+ggplot(data, aes(Temperature))+
+  geom_histogram(bins=100, color = 'black')+
+  labs(title = 'Temperature Distribution',
+       y='Weekly sales',
+       x='Temperature')
+
+ggplot(data, aes(Temperature, Weekly_Sales))+
+  geom_point(alpha =1/10, color = 'red')+
+  labs(title = 'Temperature against Weekly Sales',
+       y='Weekly sales',
+       x='Temperature')
+```
+
+Temperature VS Sales :-
+
+The observation that sales exhibit a very slight decrease as temperature
+increases suggests a minor impact of temperature on sales. This finding
+implies that temperature fluctuations have limited influence on consumer
+behavior and purchasing decisions in this context.
+
+Several factors may contribute to this observation:
+
+Product Demand Sensitivity: The products sold in the retail setting may
+not be significantly affected by changes in temperature. For example, if
+the store primarily sells non-seasonal or essential items, consumer
+demand may remain relatively stable regardless of temperature
+variations. Regional Climate Considerations: Depending on the geographic
+location of the stores, temperature fluctuations may have less impact on
+sales if the climate is relatively stable or if consumers are accustomed
+to seasonal variations in temperature.
+
+
+#### Average sales on holidays and normal days
+
+```{r}
+library(forcats)
+# Create a box plot
+ggplot(data, aes(x = as_factor(Holiday_Flag), y = Weekly_Sales)) +
+  geom_boxplot() +
+  xlab("Holiday Flag") +
+  ylab("Total Sales") +
+  ggtitle("Box Plot of Total Sales by Holiday Flag")
+
+
+```
+
+The box plots clearly illustrate the difference in sales between holiday
+and normal days, with holiday sales consistently surpassing those of
+normal days. This observation underscores the significant impact that
+holidays have on consumer spending behavior and overall sales
+performance.
+
+Several factors contribute to the elevated sales levels during holidays:
+
+Increased Consumer Spending: Holidays often coincide with heightened
+consumer spending as individuals allocate funds for gifts, celebrations,
+and special events. The festive atmosphere and promotional activities
+during holidays encourage discretionary purchases, driving up sales
+across various retail sectors.
+
+Shopping Events: Holidays often coincide with popular shopping events,
+such as Cyber Monday, Boxing Day, and Presidents Day sales, which
+further stimulate consumer spending and drive sales growth. These events
+serve as key drivers of retail activity, attracting shoppers with
+exclusive discounts and limited-time offers.
+
+#### Grouping of main holiday events
+
+```{r}
+#creating temp categories
+data$Temp_Category <- ifelse(data$Temperature < 50, "cold", 
+                             ifelse(data$Temperature < 78, "moderate", "hot"))
+
+#Creating New Column Holiday
+data$Holiday <- ifelse((data$Date == "2010-02-12" )| (data$Date == "2011-02-11") | (data$Date == "2012-02-10"), "Super Bowl",
+                       ifelse((data$Date == max(data$Date[data$Date < ymd("2010-02-12")])) |
+                                (data$Date == max(data$Date[data$Date < ymd("2011-02-11")])) |
+                                (data$Date == max(data$Date[data$Date < ymd("2012-02-10")])), "Week Before Super Bowl",
+                      ifelse((data$Date == min(data$Date[data$Date > ymd("2010-02-12")])) | 
+                                       (data$Date == min(data$Date[data$Date > ymd("2012-02-10")])) , "Week After Super Bowl",
+                      ifelse((data$Date == "2010-09-10" )| (data$Date == "2011-09-09") | (data$Date == "2012-09-07"), "Labour Day", 
+                      ifelse((data$Date == max(data$Date[data$Date < ymd("2010-09-10")])) | 
+                                                     (data$Date == max(data$Date[data$Date < ymd("2011-09-09")])) |
+                                                     (data$Date == max(data$Date[data$Date < ymd("2012-09-07")])) , "Week Before Labour Day",
+                      ifelse((data$Date == min(data$Date[data$Date > ymd("2010-09-10")])) |
+                                                    (data$Date == min(data$Date[data$Date > ymd("2012-09-07")])) , "Week After Labour Day",
+                      ifelse((data$Date == "2010-11-26") | (data$Date == "2011-11-25") | (data$Date == "2012-11-23"), "Thanksgiving",
+                      ifelse((data$Date == max(data$Date[data$Date < ymd("2010-11-26")]))|
+                                                    (data$Date == max(data$Date[data$Date < ymd("2011-11-25")])) , "Week Before Thanksgiving",
+                      ifelse(data$Date == min(data$Date[data$Date > ymd("2010-11-26")]), "Week After Thanksgiving",
+                      ifelse((data$Date == "2010-12-31")|(data$Date == "2011-12-30") | (data$Date == "2012-12-28"), "Christmas",
+                      ifelse((data$Date == max(data$Date[data$Date < ymd("2010-12-31")])) |
+                                 (data$Date == max(data$Date[data$Date < ymd("2011-12-30")])), "Week Before Christmas",
+                      ifelse(data$Date == min(data$Date[data$Date > ymd("2010-12-31")]), "Week After Christmas",
+                      ifelse(data$Date == min(data$Date[data$Date > ymd("2011-02-12")]), "Week After Super Bowl",
+                      ifelse(data$Date == min(data$Date[data$Date > ymd("2011-09-10")]), "Week After Labour Day",
+                      ifelse(data$Date == min(data$Date[data$Date > ymd("2011-11-26")]), "Week After Thanksgiving",
+                      ifelse(data$Date == min(data$Date[data$Date > ymd("2011-12-31")]), "Week After Christmas", "Normal Day"))))))))))))))))
+
+
+table(data$Holiday)
+
+mydata <- data %>%
+  group_by(Date, Holiday) %>%
+  summarize(Total_Sales = sum(Weekly_Sales), .groups = "drop")
+
+mydata$Holiday <- factor(mydata$Holiday, levels = c("Week Before Super Bowl", "Super Bowl", "Week After Super Bowl", "Normal Day", "Week Before Labour Day", "Labour Day", "Week After Labour Day", "Week Before Thanksgiving", "Thanksgiving", "Week After Thanksgiving", "Week Before Christmas", "Christmas", "Week After Christmas"))
+
+
+
+```
+#### Sales trend by holidays
+
+```{r}
+shapes <- c(15, 17, 16, 1, 6, 8, 7, 11, 18, 10, 2, 3, 4) # Set shapes for all categories
+
+ggplot(mydata, aes(x = Date, y = Total_Sales, color = Holiday, shape = Holiday)) +
+  geom_point(aes(color = Holiday, 
+                 shape = Holiday),size = 3) +
+  geom_line(aes(group = 1), size = 1, color = 'black') +
+  labs(x = "Date", y = "Total Sales", title = "Total Sales by Date and Holiday") +
+  theme_minimal() +
+  scale_shape_manual(values = shapes) # Manually set shapes for all categories
+
+```
+
+```{r}
+#### mean sales by holiday
+hs <- data %>%
+  group_by(Holiday) %>%
+  summarize(Avg_Sales = mean(Weekly_Sales))
+
+#print plot in order of holidays
+hs$Holiday <- factor(hs$Holiday, levels = c("Week Before Super Bowl", "Super Bowl", "Week After Super Bowl",
+                                            "Week Before Labour Day", "Labour Day", "Week After Labour Day",
+                                            "Week Before Thanksgiving", "Thanksgiving", "Week After Thanksgiving",
+                                            "Week Before Christmas", "Christmas", "Week After Christmas","Normal Day"))
+
+#plot
+ggplot(hs, aes(y = Holiday, x = Avg_Sales)) +
+  geom_bar(stat = "identity", fill = "#69b3a2") +
+  labs(title = "Average Sales by type of day", x = "Average Sales", y = "Event") +
+  theme_minimal() +
+  theme(panel.grid.major.y = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        axis.line = element_line(colour = "black"),
+        panel.border = element_blank(),
+        panel.background = element_blank())+
+  geom_text(aes(label = scales::dollar_format()(Avg_Sales)), hjust = 1.1, na.rm = TRUE)
+```
+
+The plot effectively visualizes sales data across different holiday
+events, as well as the week preceding and following each event, along
+with sales on normal days. By using distinct symbols to represent each
+holiday event, the plot enables us to discern trends in sales patterns
+over time and identify key insights into consumer behavior during these
+periods.
+
+Key observations from the plot include:
+
+**Sales Trends by Holiday:** The plot reveals that the week before
+Christmas experiences the highest sales volume among all holiday events,
+indicating significant consumer spending leading up to the festive
+season. This aligns with expectations, as Christmas is typically
+associated with extensive gift shopping and preparations.
+
+**Thanksgiving Sales:** Thanksgiving also stands out as a significant
+sales event, with elevated sales levels observed in the week leading up
+to the holiday. This suggests that consumers engage in pre-holiday
+shopping activities in anticipation of Thanksgiving gatherings and
+celebrations.
+
+**Post-Holiday Sales:** Interestingly, the plot indicates a substantial
+drop in sales in the week following each holiday event. Sales during
+this period often revert to levels comparable to or even lower than
+those of normal days, reflecting a post-holiday lull in consumer
+spending. This phenomenon is common as consumers may have already
+completed their holiday shopping and be less inclined to make additional
+purchases immediately after the holiday.
+
+**Comparison with Normal Days:** Sales on normal days serve as a
+baseline for comparison, allowing us to gauge the relative impact of
+holiday events on sales performance. The contrast between holiday sales
+and normal day sales underscores the significant boost in consumer
+spending during holiday periods.
+
+#### Fuel vs sales
+
+```{r}
+ggplot(data, aes(x = Fuel_Price, y = Weekly_Sales)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  labs(x = "Fuel Price", y = "Weekly Sales") +
+  ggtitle("Impact of Fuel Price on Weekly Sales")
+```
+
+The observation that the Fuel Price vs. Sales graph does not exhibit a
+clear impact on sales, even as fuel prices increase, suggests a limited
+correlation between fuel prices and sales in this context. This finding
+implies that fluctuations in fuel prices may have minimal influence on
+consumer behavior and purchasing decisions in this particular retail
+setting.
+
+Several factors may contribute to this observation:
+
+**Consumer Behavior Resilience:** Consumers may demonstrate resilience
+to changes in fuel prices, particularly if the retail store is
+frequented by local customers who have established shopping routines and
+patterns that are less affected by short-term fluctuations in fuel
+costs.
+
+**Necessity of Purchases:** The types of products sold in the retail
+setting may be essential or non-discretionary items that consumers need
+regardless of changes in fuel prices. In such cases, consumer demand may
+remain relatively stable, regardless of fluctuations in fuel costs.
+
+
+
+#### Average sales p
+
+
+
+#### Quarterly sales trend
+
+```{r}
+data_quarterly <- data %>%
+  group_by(Year, Quarter = quarter(Date)) %>%
+  summarise(Total_Sales = sum(Weekly_Sales), .groups = "drop")
+
+# Quarterly performance
+ggplot(data_quarterly, aes(x = Quarter, y = Total_Sales, fill = factor(Year))) +
+  geom_bar(position = "dodge", stat = "identity") +
+  scale_fill_brewer(palette = "Set2") +
+  labs(x = "Quarter", y = "Total Sales", title = "Quarterly Sales by Year") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 18, face = "bold"),
+        axis.title = element_text(size = 14, face = "bold"),
+        axis.text = element_text(size = 12),
+        legend.title = element_text(size = 12, face = "bold"),
+        legend.text = element_text(size = 10)) +
+  guides(fill = guide_legend(title = "Year", title.position = "top", ncol = 3)) +
+  scale_y_continuous(labels = scales::comma)
+
+```
+
+The graph depicting sales differences quarter-wise offers valuable insights into sales trends across different quarters over the three-year period. Here's an analysis of the key observations:
+
+Quarterly Sales Disparities: Across all three years, the graph illustrates distinct disparities in sales performance between different quarters. Specifically, the 1st quarter consistently exhibits lower sales figures compared to other quarters, suggesting a recurring pattern of subdued sales activity at the beginning of each year.
+
+High-Performing Quarter 4: Conversely, Quarter 4 consistently emerges as the period with the highest sales figures across all three years. This trend indicates a strong finish to each year, with elevated sales volumes observed towards the end of the year, potentially driven by holiday shopping, year-end promotions, and festive season spending.
+
+Stable Performance in Quarters 2 and 3: Quarters 2 and 3 demonstrate relatively consistent sales performance across the three-year period. This stability suggests that sales remain resilient and relatively steady during the middle months of the year, with consistent levels of consumer activity and purchasing behavior.
+
+## Model Building
+
+### Multiple Linear Regression
+
+**Research Question:** *How do various factors such as store
+characteristics (Store), external economic indicators (Temperature,
+Holiday_Flag, Fuel_Price, CPI, Unemployment) impact weekly sales at
+Walmart?*
+
+```{r}
+# Define predictor variables (features) and the target variable
+predictors <- c("Store","Temperature","Holiday_Flag","Fuel_Price", "CPI", "Unemployment")
+target <- "Weekly_Sales"
+
+# Create a formula for the regression model
+formula <- as.formula(paste(target, "~", paste(predictors, collapse = " + ")))
+
+# Fit multiple linear regression model
+lm_model <- lm(formula, data = train_data)
+summary(lm_model)
+
+```
+#### cross-validation
+
+```{r}
+# Evaluate model performance using cross-validation
+# Define cross-validation control parameters
+ctrl <- trainControl(method = "cv", number = 5)
+
+# Train the model using cross-validation
+lm_cv <- train(formula, data = train_data, method = "lm", trControl = ctrl)
+
+# Print cross-validated results
+print(lm_cv)
+
+# Calculate and print Mean Absolute Error (MAE) and Root Mean Squared Error (RMSE)
+predictions <- predict(lm_model, newdata = data)
+mae <- mean(abs(predictions - data$Weekly_Sales))
+rmse <- sqrt(mean((predictions - data$Weekly_Sales)^2))
+
+cat("Mean Absolute Error (MAE):", mae, "\n")
+cat("Root Mean Squared Error (RMSE):", rmse, "\n")
+
+```
+
+Residuals: Our model's residuals, the differences between actual and
+predicted sales, exhibit a range from -1043230 to 2711012, indicating
+some variability in our predictions.
+
+Coefficients: Store: For every unit increase in store number, weekly
+sales decrease by approximately \$16,015.6.
+
+Temperature: A one-unit increase in temperature is associated with a
+decrease in weekly sales by approximately \$900.7.
+
+Holiday_Flag: Stores tend to experience an increase in weekly sales by
+approximately \$73,592.4 during holiday periods.
+
+Fuel_Price: Fuel prices show no significant impact on weekly sales, with
+a non-significant coefficient and p-value.
+
+CPI (Consumer Price Index): Higher CPI values are associated with lower
+weekly sales, with an approximate decrease of \$2323.3 for each unit
+increase in CPI.
+
+Unemployment: An increase in unemployment leads to a decrease in weekly
+sales, with approximately \$22,205.1 reduction in sales for each unit
+increase in unemployment rate.
+
+Model Fit: Multiple R-squared: Our model explains around 15.08% of the
+variance in weekly sales. While this indicates a modest level of
+explanatory power, it suggests that there are other factors beyond those
+included in our model influencing sales.
+
+Residual Standard Error: The standard deviation of our model's residuals
+is approximately \$521,500, reflecting the variability in sales that
+remains unexplained by our predictors.
+
+Since Linear regression model is having very low accuracy lets proceed
+with other models,
+
+### KNN
+
+```{r}
+# Define grid of hyperparameters for KNN
+param_grid <- expand.grid(k = c(1, 3, 5, 7, 9, 11))
+
+# Perform grid search using 5-fold cross-validation
+ctrl <- trainControl(method = "cv", number = 5)
+knn_model <- train(Weekly_Sales ~ ., 
+                   data = train_data, 
+                   method = "knn", 
+                   trControl = ctrl, 
+                   tuneGrid = param_grid)
+
+# Print best hyperparameters
+print(knn_model)
+
+# Evaluate model performance on test data
+predictions <- predict(knn_model, newdata = test_data)
+mae_knn <- mean(abs(predictions - test_data$Weekly_Sales))
+rmse_knn <- sqrt(mean((predictions - test_data$Weekly_Sales)^2))
+
+cat("KNN Model - Mean Absolute Error (MAE):", mae_knn, "\n")
+cat("KNN Model - Root Mean Squared Error (RMSE):", rmse_knn, "\n")
+
+```
+
+```{r}
+# Define control parameters for cross-validation
+ctrl <- trainControl(method = "cv",  # Cross-validation method
+                     number = 5,     # Number of folds
+                     savePredictions = TRUE, # Save predictions for analysis
+                     summaryFunction = defaultSummary) # Use default summary function
+
+# Train the KNN model with k = 5 using cross-validation
+knn_model <- train(Weekly_Sales ~ ., 
+                   data = data, 
+                   method = "knn", 
+                   trControl = ctrl, 
+                   tuneGrid = data.frame(k = 5))
+
+# Print cross-validated results
+print(knn_model)
+```
+
+Model Building and Interpretation: We constructed two k-NN models, each
+utilizing different sets of predictors and varying sample sizes:
+
+Model 1: 5151 samples, 11 predictors
+
+Resampling: Employing a 5-fold cross-validation approach, we trained our
+model on different subsets of the data to evaluate its performance
+robustly.
+
+Optimal k-value Selection: By testing different values of k (number of
+nearest neighbors), we identified the model's optimal hyperparameter
+configuration based on the smallest Root Mean Squared Error (RMSE). The
+chosen k-value was 5.
+
+Model Performance: Mean Absolute Error (MAE): The average absolute
+difference between predicted and actual sales was approximately
+\$401,924.1.
+
+Root Mean Squared Error (RMSE): The square root of the average squared
+difference between predicted and actual sales was approximately
+\$490,881.8.
+
+R-squared (Rsquared): The proportion of variance in weekly sales
+explained by the model was approximately 21.85%.
+
+Model 2: 6435 samples, 13 predictors
+
+Resampling: Similar to Model 1, we employed 5-fold cross-validation to
+assess model performance. Optimal k-value Selection: In this model, the
+k-value was held constant at 5, as it was found to be the optimal choice
+in Model 1.
+
+Model Performance: Mean Absolute Error (MAE): The average absolute
+difference between predicted and actual sales was approximately
+\$401,803.2.
+
+Root Mean Squared Error (RMSE): The square root of the average squared
+difference between predicted and actual sales was approximately
+\$492,601.6. R-squared (Rsquared): The proportion of variance in weekly
+sales explained by the model was approximately 24.74%.
+
+Conclusion: Our k-NN models demonstrate moderate predictive performance
+in forecasting weekly sales. While the models exhibit relatively high
+RMSE values, suggesting some level of prediction error, the MAE values
+are more manageable, indicating the average magnitude of errors in our
+predictions. Additionally, the R-squared values suggest that the models
+explain a modest proportion of the variance in weekly sales.
+
+Thus lets proceed with Decision trees,
+
+### Decision tree
+
+```{r}
+library(rpart)
+
+# Train the decision tree model
+tree_model <- rpart(Weekly_Sales ~ ., data = train_data[, c(predictors, target)])
+
+# Make predictions on the training data
+predictions <- predict(tree_model, newdata = train_data[, c(predictors, target)])
+
+# Evaluate model performance
+mae_tree <- mean(abs(predictions - train_data$Weekly_Sales))
+rmse_tree <- sqrt(mean((predictions - train_data$Weekly_Sales)^2))
+
+# Print evaluation metrics
+cat("Decision Tree Model - Mean Absolute Error (MAE):", mae_tree, "\n")
+cat("Decision Tree Model - Root Mean Squared Error (RMSE):", rmse_tree, "\n")
+```
+
+```{r}
+# Define control parameters for cross-validation
+ctrl <- trainControl(method = "cv",  # Cross-validation method
+                     number = 5,     # Number of folds
+                     savePredictions = TRUE, # Save predictions for analysis
+                     summaryFunction = defaultSummary) # Use default summary function
+
+# Train the decision tree model using cross-validation
+tree_model <- train(Weekly_Sales ~ ., 
+                    data = train_data[, c(predictors, target)], 
+                    method = "rpart", 
+                    trControl = ctrl)
+
+# Print cross-validated results
+print(tree_model)
+```
+
+Model Building and Interpretation:
+
+Decision Tree Model: 5151 samples, 6 predictors
+
+Resampling: Utilizing a 5-fold cross-validation approach, we trained and
+evaluated our Decision Tree model on different subsets of the data to
+ensure robust performance assessment.
+
+Optimal Complexity Parameter (cp) Selection: We tuned the complexity
+parameter (cp) of the Decision Tree model to find the optimal
+hyperparameter configuration. The chosen cp value, 0.05395152, minimized
+the Root Mean Squared Error (RMSE).
+
+Model Performance: Mean Absolute Error (MAE): The average absolute
+difference between predicted and actual sales was approximately
+\$158,450.8.
+
+Root Mean Squared Error (RMSE): The square root of the average squared
+difference between predicted and actual sales was approximately
+\$223,141.4.
+
+R-squared (Rsquared): The proportion of variance in weekly sales
+explained by the model was approximately 41.35%.
+
+Conclusion: Our Decision Tree regression model demonstrates promising
+performance in predicting weekly sales. With relatively low MAE and RMSE
+values, the model accurately captures the variation in sales across
+different predictors. Furthermore, the relatively high R-squared value
+suggests that a significant proportion of the variance in weekly sales
+is explained by the model.
+
+To further enhance our predictive capabilities, we started exploring
+ensemble techniques such as Random Forest.
+
+### Random Forest
+
+```{r}
+# Load the randomForest package
+library(randomForest)
+
+# Convert predictor variables and target variable to matrix format
+X <- as.matrix(train_data[, predictors])
+y <- train_data$Weekly_Sales
+
+# Train the Random Forest model
+rf_model <- randomForest(x = X, y = y)
+
+# Print the model summary (optional)
+print(rf_model)
+```
+
+```{r}
+# Make predictions on the training data
+predictions <- predict(rf_model, train_data)
+
+# Calculate Mean Absolute Error (MAE)
+mae <- mean(abs(predictions - train_data$Weekly_Sales))
+
+# Calculate Root Mean Squared Error (RMSE)
+rmse <- sqrt(mean((predictions - train_data$Weekly_Sales)^2))
+
+# Calculate R-squared (R²)
+r_squared <- 1 - sum((predictions - train_data$Weekly_Sales)^2) / sum((train_data$Weekly_Sales - mean(train_data$Weekly_Sales))^2)
+
+# Print the performance metrics
+print(paste("Mean Absolute Error (MAE):", round(mae, 2)))
+print(paste("Root Mean Squared Error (RMSE):", round(rmse, 2)))
+print(paste("R-squared (R²):", round(r_squared, 4)))
+
+```
+
+Model Building and Interpretation:
+
+Model Configuration: We constructed a Random Forest regression model
+with 500 trees, considering a subset of 2 variables at each split.
+
+Model Evaluation: Our model achieved a high level of predictive
+accuracy, with the mean of squared residuals indicating that
+approximately 93.02% of the variance in weekly sales was explained by
+the model.
+
+Model Performance Metrics: Mean Absolute Error (MAE): The average
+absolute difference between predicted and actual sales was approximately
+\$45,648.45.
+
+Root Mean Squared Error (RMSE): The square root of the average squared
+difference between predicted and actual sales was approximately
+\$80,167.08.
+
+R-squared (R²): The proportion of variance in weekly sales explained by
+the model was exceptionally high, approximately 97.99%.
+
+As random forest did show highest accuracy we are picking random forest
+as our model and now lets predict future sales using random forest
+model,
+
+### Selecting the best model
+
+Upon considering all the metric performances of the models, Random
+Forest model seems the best. We continue to test its performance using
+test data as well.
+
+## Prediction model using the best model
+
+```{r}
+# Make predictions on the test data
+predictions <- predict(rf_model, newdata = test_data)
+
+# Calculate RMSE
+test_rmse <- sqrt(mean((test_data$Weekly_Sales - predictions)^2))
+
+# Calculate MAE
+test_mae <- mean(abs(test_data$Weekly_Sales - predictions))
+
+# Calculate R-squared (R²)
+test_r_squared <- 1 - sum((predictions - test_data$Weekly_Sales)^2) / sum((test_data$Weekly_Sales - mean(test_data$Weekly_Sales))^2)
+
+# Print model performance on test data
+cat("Random Forest Model Performance on Test Data:\n")
+cat("RMSE:", test_rmse, "\n")
+cat("MAE:", test_mae, "\n")
+cat("R-squared (R²):", test_r_squared, "\n")
+```
+
+Model Evaluation on Test Data:
+
+RMSE: The model exhibited an RMSE of \$152,055.5 on the test data,
+indicating the average magnitude of prediction errors.
+
+MAE: The MAE on the test data was approximately \$89,403.45,
+representing the average absolute difference between predicted and
+actual sales.
+
+R-squared (R²): The model demonstrated a strong explanatory power on the
+test data, with an R² value of approximately 0.9261782.
+
+Conclusion: Our Random Forest regression model showcases exceptional
+performance in forecasting weekly sales, achieving high accuracy and
+explanatory power. The model's ability to capture complex interactions
+between predictors contributes to its robustness and reliability in
+predicting sales behavior.
+
+
+
+```{r}
+# Load necessary library
+library(ggplot2)
+
+# Create a data frame containing actual and predicted values
+predictions_df <- data.frame(Actual = test_data$Weekly_Sales, Predicted = predictions)
+
+# Create scatter plot
+ggplot(predictions_df, aes(x = Actual, y = Predicted)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +  # Add diagonal line (y = x) for reference
+  labs(x = "Actual Values", y = "Predicted Values", title = "Actual vs. Predicted Values") +
+  theme_minimal()
+```
+
+This visual representation vividly illustrates the effectiveness of our model. As we observe the scatter plot, we notice a distinct pattern: the predicted values align remarkably close to the actual values, forming a diagonal trajectory. This alignment signifies the model's ability to make precise predictions, closely mirroring the ground truth. The proximity of the predicted values to the diagonal line signifies minimal prediction errors, underscoring the high accuracy and reliability of our model. This visual confirmation reinforces our confidence in the model's performance and underscores its potential utility in practical applications.
+
+#### Testing on random values
+
+```{r}
+# 1. Select random 100 rows from your dataset
+set.seed(123)  # Set seed for reproducibility
+random_indices <- sample(1:nrow(data), 1000)  # Randomly select 10 indices
+random_data <- data[random_indices, ]  # Select random 100 rows
+
+# 2. Use your trained model to predict the weekly sales for these 100 data points
+predictions <- predict(rf_model, newdata = random_data)
+
+# 3. Compare the predicted values with the actual weekly sales from the selected data points
+comparison_df <- data.frame(
+  Actual_Weekly_Sales = random_data$Weekly_Sales,
+  Predicted_Weekly_Sales = predictions
+)
+
+# Print the comparison dataframe
+print(comparison_df)
+
+```
+
+#### Visual respresentation of randomly predicted variables
+
+```{r}
+library(ggplot2)
+
+# Create a scatterplot to compare predicted and actual values
+comparison_plot <- ggplot(comparison_df, aes(x = Actual_Weekly_Sales, y = Predicted_Weekly_Sales)) +
+  geom_point(color = "blue") +  # Scatterplot points
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +  # Add a diagonal line for reference
+  labs(title = "Comparison of Predicted vs Actual Weekly Sales",
+       x = "Actual Weekly Sales",
+       y = "Predicted Weekly Sales") +
+  theme_minimal()  # Minimal theme for the plot
+
+# Print the plot
+print(comparison_plot)
+
+```
+
+## Conclusion
+
+In conclusion, our project endeavors to forecast weekly sales in retail
+stores through the exploration of four distinct machine learning models:
+Linear Regression, k-Nearest Neighbors (k-NN), Decision Tree Regression,
+and Random Forest Regression.
+
+Upon comprehensive evaluation of these models, it becomes evident that
+Random Forest Regression emerges as the most promising and effective
+approach for predicting weekly sales. Here's a summary of our findings:
+
+**Linear Regression:** While providing valuable insights into the
+relationships between predictors and weekly sales, the linear regression
+model exhibited limited predictive power, as evidenced by its relatively
+low R-squared value and moderate performance metrics.
+
+**k-Nearest Neighbors (k-NN):** The k-NN models demonstrated moderate
+predictive capabilities, with acceptable Mean Absolute Error (MAE) and
+Root Mean Squared Error (RMSE) values. However, their performance lagged
+behind that of the Random Forest model, as indicated by lower R-squared
+values.
+
+**Decision Tree Regression:** Decision Tree models exhibited competitive
+performance, offering reasonable accuracy in predicting weekly sales.
+Nevertheless, their performance metrics, including MAE and RMSE, fell
+short of those achieved by the Random Forest model.
+
+**Random Forest Regression:** Notably, the Random Forest model showcased
+exceptional predictive accuracy and robustness, outperforming the other
+models across all key performance metrics. With its high R-squared
+value, minimal prediction errors, and impressive explanatory power, the
+Random Forest model emerges as the most reliable and effective choice
+for forecasting weekly sales in our retail environment.
+
+In light of these findings, we recommend the adoption of the Random
+Forest Regression approach for practical applications in sales
+forecasting. Its superior performance, coupled with its ability to
+capture complex relationships among predictors, positions the Random
+Forest model as the optimal solution for optimizing decision-making
+processes and enhancing operational efficiency in retail settings.
